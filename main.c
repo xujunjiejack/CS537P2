@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <errno.h>
 
 
 // No mechanism for escaping or quoting whitespace (or anything else) is needed
@@ -12,7 +14,7 @@ typedef enum{
     none = -1,
     _cd = 1,
     _pwd = 2,
-    _exit = 3
+    _exits = 3
 
 }builtin_cmd;
 
@@ -79,7 +81,7 @@ Command* free_command(Command * cmd){
 }
 
 int cmd_is_builtin(Command* cmd);
-void perform_builtin_function(Command* cmd);
+int perform_builtin_function(Command* cmd);
 
 int main() {
     printf("Hello, World!\n");
@@ -101,15 +103,22 @@ int main() {
     // parse cmd (built-in or user program, whether has file descriptor)
     // How can I parse. In documentation, it says parsing by whitespace
     // Then use the first string as the command
-    char str[] = "1 2 3 < test.txt > hello ";
+    //char str[] = "1 2 3 < test.txt > hello ";
+    char str[] = "pwd";
     Command* cmd = parse_command(str);
 
     print_cmd_status(cmd);
     // if built-in, no fork. search in the built in list to make sure the cmd in built-ins
     // support
     if (cmd_is_builtin(cmd)){
-        perform_builtin_function(cmd);
-        // jump out
+
+        // This function returns 0 to indicate not success.
+        if (perform_builtin_function(cmd)){
+            // jump out
+        } else {
+            // let's see whether this brunch is necessary
+            // jump out
+        };
     }
 
     // if user program, fork process
@@ -241,7 +250,7 @@ int cmd_is_builtin(Command* cmd){
     }
 
     if(string_equal(cmd->cmd, "exit")){
-        cmd->built_cmd_type = _exit;
+        cmd->built_cmd_type = _exits;
         return 1;
     }
 
@@ -249,8 +258,47 @@ int cmd_is_builtin(Command* cmd){
     return 0;
 }
 
-void perform_builtin_function(Command* cmd){
+int perform_builtin_function(Command* cmd){
+    char cwd[256];
+    switch (cmd->built_cmd_type){
+        case _cd :
 
+            // if no argument gets
+            if (cmd->argc == 1){
+                if (chdir(getenv("HOME"))){
+                    fprintf(stderr, "%s: %s\n", cmd->cmd, strerror(errno));
+                    return 0;
+                }else{
+                    return 1;
+                }
+            }
+
+            //Upon successful completion, 0 shall be returned.
+            // This is not success case
+            if (chdir(cmd->argv[1])){
+                fprintf(stderr, "%s: %s\n", cmd->cmd, strerror(errno));
+                return 0;
+            }
+            return 1;
+
+        case _pwd:
+            if (getcwd(cwd, sizeof(cwd)) != NULL){
+                fprintf(stdout, "%s", cwd);
+                return 1;
+            }else {
+                fprintf(stderr, "%s: %s\n", cmd->cmd, strerror(errno));
+            }
+            return 0;
+            break;
+
+        case _exits:
+            exit(0);
+            break;
+
+        default:
+            fprintf(stderr, "This case should not be entered");
+            return 0;
+    }
 }
 
 // run different process for regular process and background process
