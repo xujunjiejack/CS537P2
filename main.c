@@ -46,6 +46,8 @@ typedef struct {
 } Command;
 
 Command* parse_command(char* cmd);
+void on_exiting(Command* cmd);
+
 
 void print_cmd_status(Command* cmd){
     printf("The cmd name: %s\n", cmd->cmd);
@@ -82,6 +84,8 @@ Command* free_command(Command * cmd){
 
 int cmd_is_builtin(Command* cmd);
 int perform_builtin_function(Command* cmd);
+void setup_stdin(Command* cmd);
+void setup_stdout(Command* cmd);
 
 int main() {
     printf("Hello, World!\n");
@@ -113,14 +117,21 @@ int main() {
     if (cmd_is_builtin(cmd)){
 
         // This function returns 0 to indicate not success.
-        if (perform_builtin_function(cmd)){
+        // If this function returns -1, exit the program.
+
+        if (perform_builtin_function(cmd) == -1 ){
+
+            on_exiting(cmd);
+            exit(0);
             // jump out
-        } else {
-            // let's see whether this brunch is necessary
-            // jump out
-        };
+        }
+
+        on_exiting(cmd);
+        exit(0);// TODO Just for now
     }
 
+    setup_stdin(cmd);
+    setup_stdout(cmd);
     // if user program, fork process
     // fork
 
@@ -143,8 +154,7 @@ int main() {
     // for parent (shell), wait until the child exits.
 
     // free cmd;
-    cmd = free_command(cmd);
-    free(cmd);
+    on_exiting(cmd);
     // Loop back
     return 0;
 }
@@ -258,6 +268,15 @@ int cmd_is_builtin(Command* cmd){
     return 0;
 }
 
+void setup_stdin(Command* cmd){
+    if (cmd->stdin_is_from_file){
+        stdin = open()
+    }
+}
+
+void setup_stdout(Command* cmd){
+
+}
 int perform_builtin_function(Command* cmd){
     char cwd[256];
     switch (cmd->built_cmd_type){
@@ -299,6 +318,11 @@ int perform_builtin_function(Command* cmd){
             fprintf(stderr, "This case should not be entered");
             return 0;
     }
+}
+
+void on_exiting(Command* cmd){
+    free_command(cmd);
+    free(cmd);
 }
 
 // run different process for regular process and background process
