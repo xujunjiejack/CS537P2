@@ -3,12 +3,13 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <wait.h>
 
 
 // No mechanism for escaping or quoting whitespace (or anything else) is needed
 
 //Input lines will be at most 256 characters (including the trailing '\n')
-
 
 typedef enum{
     none = -1,
@@ -47,6 +48,12 @@ typedef struct {
 
 Command* parse_command(char* cmd);
 void on_exiting(Command* cmd);
+int fork_for_background_process(Command* cmd);
+void fork_for_regular_process(Command* cmd);
+int cmd_is_builtin(Command* cmd);
+int perform_builtin_function(Command* cmd);
+void setup_stdin(Command* cmd);
+void setup_stdout(Command* cmd);
 
 
 void print_cmd_status(Command* cmd){
@@ -82,12 +89,12 @@ Command* free_command(Command * cmd){
     return cmd;
 }
 
-int cmd_is_builtin(Command* cmd);
-int perform_builtin_function(Command* cmd);
-void setup_stdin(Command* cmd);
-void setup_stdout(Command* cmd);
+int * background_processes;
+int background_proc_count = 0;
 
 int main() {
+
+    background_processes = calloc(1, sizeof(int));
     printf("Hello, World!\n");
 
     // How to write a shell
@@ -108,7 +115,7 @@ int main() {
     // How can I parse. In documentation, it says parsing by whitespace
     // Then use the first string as the command
     //char str[] = "1 2 3 < test.txt > hello ";
-    char str[] = "pwd";
+    char str[] = "hello";
     Command* cmd = parse_command(str);
 
     print_cmd_status(cmd);
@@ -130,17 +137,28 @@ int main() {
         exit(0);// TODO Just for now
     }
 
-    setup_stdin(cmd);
-    setup_stdout(cmd);
-    // if user program, fork process
-    // fork
 
     // check the file descriptor
     // Given a specific file descriptor, such as "<" or ">", the corresponding
     // stdin or stdout should be set to read the data from the file
     // For stdout, the open() with the flags O-WRONLY, O_CREATE, and
     // O_TRUNC can be useful
-    // For stdin, the open() should be executed with the O_RDONLY flag.
+    // For stdin, the open() should be executed with the O_RDONLY flag.\
+    // Do I need to close the file before leaving?
+    setup_stdin(cmd);
+    setup_stdout(cmd);
+    // if user program, fork process
+    // fork
+
+    if (cmd->is_back_ground_process){
+        int pid = fork_for_background_process(cmd);
+        background_proc_count ++;
+        background_processes = realloc(background_processes,
+                                       background_proc_count * sizeof(int));
+        background_processes[background_proc_count] = pid;
+    }else{
+        fork_for_regular_process(cmd);
+    }
 
     // check &. If a command is issued with this character, this command is seen as
     // a background process. The background process doesn't require the shell
@@ -270,12 +288,20 @@ int cmd_is_builtin(Command* cmd){
 
 void setup_stdin(Command* cmd){
     if (cmd->stdin_is_from_file){
-        stdin = open()
+        int fd = open(cmd->stdin_file_name , O_RDONLY);
+        if (dup2(STDIN_FILENO, fd)){
+            fprintf(stderr, "Error on file redirecting");
+        };
     }
 }
 
 void setup_stdout(Command* cmd){
-
+    if (cmd->stdout_is_from_file){
+        int fd = open(cmd->stdout_file_name, O_WRONLY | O_CREAT | O_TRUNC);
+        if (dup2(STDOUT_FILENO, fd)){
+            fprintf(stderr, "Error on file redirecting");
+        };
+    }
 }
 int perform_builtin_function(Command* cmd){
     char cwd[256];
@@ -326,12 +352,33 @@ void on_exiting(Command* cmd){
 }
 
 // run different process for regular process and background process
-void fork_for_regular_process(){
-
+void fork_for_regular_process(Command* cmd){
+    pid_t pid;
+    int status;
+    if ((pid = fork()) < 0){
+        printf(stderr, "Forking child process failed \n");
+        exit(1);
+    } else if (pid == 0){
+        if (execvp(cmd->cmd, cmd->argv) < 0);
+            printf(stderr, "exec failed\n");
+    } else{
+        while (wait(&status) != pid);
+    }
 }
 
-void fork_for_background_process(){
+// Return pid for this background process
+int fork_for_background_process(Command* cmd){
+    pid_t  pid;
+    int status;
+    if ((pid=fork()) < 0){
 
+    }  else if (pid == 0){
+        if (execvp(cmd->cmd, cmd->argv) < 0);
+        printf(stderr, "exec failed\n");
+    } else{
+        while (wait(&status) != pid);
+    }
+    return pid;
 }
 
 // built in cd, pwd, exit
