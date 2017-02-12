@@ -4,8 +4,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <wait.h>
-
+#include <sys/wait.h>
 
 // No mechanism for escaping or quoting whitespace (or anything else) is needed
 
@@ -37,6 +36,10 @@ typedef struct {
 
     int is_back_ground_process;
 
+    int pid;
+
+    int is_running_background;
+
     builtin_cmd built_cmd_type;
     // cmd
     // file descriptor with its name
@@ -54,7 +57,7 @@ int cmd_is_builtin(Command* cmd);
 int perform_builtin_function(Command* cmd);
 void setup_stdin(Command* cmd);
 void setup_stdout(Command* cmd);
-
+int test_number = 3;
 
 void print_cmd_status(Command* cmd){
     printf("The cmd name: %s\n", cmd->cmd);
@@ -89,16 +92,13 @@ Command* free_command(Command * cmd){
     return cmd;
 }
 
-int * background_processes;
-int background_proc_count = 0;
 
 int main() {
 
-    background_processes = calloc(1, sizeof(int));
-    printf("Hello, World!\n");
-
+    // printf("Hello, World!\n");
+    Command** background_cmds = calloc(1, sizeof(Command));
+    int background_count = 0;
     // How to write a shell
-
     // Before input, try to determine whether the shell should enter
     // interactive mode
     // If yes, print out the string
@@ -115,64 +115,72 @@ int main() {
     // How can I parse. In documentation, it says parsing by whitespace
     // Then use the first string as the command
     //char str[] = "1 2 3 < test.txt > hello ";
-    char str[] = "hello";
-    Command* cmd = parse_command(str);
+    int count = 0;
 
-    print_cmd_status(cmd);
-    // if built-in, no fork. search in the built in list to make sure the cmd in built-ins
-    // support
-    if (cmd_is_builtin(cmd)){
+    while(count != test_number) {
+        printf("running time: %d\n", count);
+        count++;
+        //char str[] = "./hello &";
+        char str[] = "pwd";
+        Command *cmd = parse_command(str);
 
-        // This function returns 0 to indicate not success.
-        // If this function returns -1, exit the program.
+        print_cmd_status(cmd);
+        // if built-in, no fork. search in the built in list to make sure the cmd in built-ins
+        // support
+        if (cmd_is_builtin(cmd)) {
 
-        if (perform_builtin_function(cmd) == -1 ){
+            // This function returns 0 to indicate not success.
+            // If this function returns -1, exit the program.
 
-            on_exiting(cmd);
-            exit(0);
-            // jump out
+            if (perform_builtin_function(cmd) == -1) {
+
+                on_exiting(cmd);
+                exit(0);
+                // jump out
+            }
+
+            continue;
+           // on_exiting(cmd);
+           // exit(0);// TODO Just for now
         }
 
-        on_exiting(cmd);
-        exit(0);// TODO Just for now
-    }
 
-
-    // check the file descriptor
-    // Given a specific file descriptor, such as "<" or ">", the corresponding
-    // stdin or stdout should be set to read the data from the file
-    // For stdout, the open() with the flags O-WRONLY, O_CREATE, and
-    // O_TRUNC can be useful
-    // For stdin, the open() should be executed with the O_RDONLY flag.\
+        // check the file descriptor
+        // Given a specific file descriptor, such as "<" or ">", the corresponding
+        // stdin or stdout should be set to read the data from the file
+        // For stdout, the open() with the flags O-WRONLY, O_CREATE, and
+        // O_TRUNC can be useful
+        // For stdin, the open() should be executed with the O_RDONLY flag.\
     // Do I need to close the file before leaving?
-    setup_stdin(cmd);
-    setup_stdout(cmd);
-    // if user program, fork process
-    // fork
+        // if user program, fork process
+        // fork
 
-    if (cmd->is_back_ground_process){
-        int pid = fork_for_background_process(cmd);
-        background_proc_count ++;
-        background_processes = realloc(background_processes,
-                                       background_proc_count * sizeof(int));
-        background_processes[background_proc_count] = pid;
-    }else{
-        fork_for_regular_process(cmd);
+        if (cmd->is_back_ground_process) {
+            if (fork_for_background_process(cmd) != -1) {
+
+                // dynamically add cmd to cmd list
+                background_count++;
+                background_cmds = realloc(background_cmds,
+                                          background_count * sizeof(Command *));
+                background_cmds[background_count - 1] = cmd;
+            }
+        } else {
+            fork_for_regular_process(cmd);
+        }
+
+        // check &. If a command is issued with this character, this command is seen as
+        // a background process. The background process doesn't require the shell
+        // to wait for it to proceed. Just leave the background process running itself
+        // However, it's necessary to constant check whether this background process
+        // has been dead. If yes, then reap it.
+
+        // then for child, run
+        // (with execvp)
+
+        // for parent (shell), wait until the child exits.
     }
-
-    // check &. If a command is issued with this character, this command is seen as
-    // a background process. The background process doesn't require the shell
-    // to wait for it to proceed. Just leave the background process running itself
-    // However, it's necessary to constant check whether this background process
-    // has been dead. If yes, then reap it.
-
-    // then for child, run
-    // (with execvp)
-
-    // for parent (shell), wait until the child exits.
-
-    // free cmd;
-    on_exiting(cmd);
+    // TODO: free cmd and cmd lists;
+    // on_exiting(cmd);
     // Loop back
     return 0;
 }
@@ -260,7 +268,6 @@ Command* parse_command(char* cmd){
         arg = strtok(NULL, " ");
     }
 
-    // assign the file descriptor
     // don't forget to free the Command at last
 
     return command;
@@ -328,7 +335,7 @@ int perform_builtin_function(Command* cmd){
 
         case _pwd:
             if (getcwd(cwd, sizeof(cwd)) != NULL){
-                fprintf(stdout, "%s", cwd);
+                fprintf(stdout, "%s\n", cwd);
                 return 1;
             }else {
                 fprintf(stderr, "%s: %s\n", cmd->cmd, strerror(errno));
@@ -359,6 +366,8 @@ void fork_for_regular_process(Command* cmd){
         printf(stderr, "Forking child process failed \n");
         exit(1);
     } else if (pid == 0){
+        setup_stdin(cmd);
+        setup_stdout(cmd);
         if (execvp(cmd->cmd, cmd->argv) < 0);
             printf(stderr, "exec failed\n");
     } else{
@@ -373,10 +382,22 @@ int fork_for_background_process(Command* cmd){
     if ((pid=fork()) < 0){
 
     }  else if (pid == 0){
-        if (execvp(cmd->cmd, cmd->argv) < 0);
-        printf(stderr, "exec failed\n");
+        setup_stdin(cmd);
+        setup_stdout(cmd);
+        cmd->pid = pid;
+        cmd->is_running_background = 1;
+
+        if (execvp(cmd->cmd, cmd->argv) < 0) {
+            printf(stderr, "exec failed\n");
+            cmd->is_running_background = 0;
+            // TODO: Add file close for file descriptor.
+            return -1;
+        }
+
     } else{
-        while (wait(&status) != pid);
+        if (waitpid(-1, &status, WNOHANG) == pid){
+            fprintf(stderr, "[%s (%d) completed with status %d]\n", cmd->cmd, pid, status);
+        }
     }
     return pid;
 }
