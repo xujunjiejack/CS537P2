@@ -57,7 +57,8 @@ int cmd_is_builtin(Command* cmd);
 int perform_builtin_function(Command* cmd);
 void setup_stdin(Command* cmd);
 void setup_stdout(Command* cmd);
-int test_number = 3;
+void check_child_exits(Command** cmds, int count);
+int test_number = 1;
 
 void print_cmd_status(Command* cmd){
     printf("The cmd name: %s\n", cmd->cmd);
@@ -88,6 +89,7 @@ Command* free_command(Command * cmd){
     for (i=0; i<cmd->argc; i++){
         free(cmd->argv[i]);
     }
+    free(cmd->argv);
 
     return cmd;
 }
@@ -116,13 +118,17 @@ int main() {
     // Then use the first string as the command
     //char str[] = "1 2 3 < test.txt > hello ";
     int count = 0;
+    while(1) {
 
-    while(count != test_number) {
-        printf("running time: %d\n", count);
+        check_child_exits(background_cmds, background_count);
+        char command_str[1024];
+        fgets(command_str, 1024, stdin);
+        check_child_exits(background_cmds, background_count);
+
+        printf("---------\nrunning time: %d\n for command %s\n", count, command_str);
         count++;
-        //char str[] = "./hello &";
-        char str[] = "pwd";
-        Command *cmd = parse_command(str);
+        char str[] = "hello > hello.txt &";
+        Command *cmd = parse_command(command_str);
 
         print_cmd_status(cmd);
         // if built-in, no fork. search in the built in list to make sure the cmd in built-ins
@@ -133,15 +139,9 @@ int main() {
             // If this function returns -1, exit the program.
 
             if (perform_builtin_function(cmd) == -1) {
-
-                on_exiting(cmd);
-                exit(0);
-                // jump out
+                break;
             }
-
             continue;
-           // on_exiting(cmd);
-           // exit(0);// TODO Just for now
         }
 
 
@@ -156,16 +156,16 @@ int main() {
         // fork
 
         if (cmd->is_back_ground_process) {
-            if (fork_for_background_process(cmd) != -1) {
-
+            fork_for_background_process(cmd);
                 // dynamically add cmd to cmd list
-                background_count++;
-                background_cmds = realloc(background_cmds,
+            background_count++;
+            background_cmds = realloc(background_cmds,
                                           background_count * sizeof(Command *));
-                background_cmds[background_count - 1] = cmd;
-            }
+            background_cmds[background_count - 1] = cmd;
+            // background process will be freed when shell ends
         } else {
             fork_for_regular_process(cmd);
+            free_command(cmd);
         }
 
         // check &. If a command is issued with this character, this command is seen as
@@ -179,9 +179,17 @@ int main() {
 
         // for parent (shell), wait until the child exits.
     }
+
+    printf("Shell exits");
     // TODO: free cmd and cmd lists;
     // on_exiting(cmd);
     // Loop back
+
+    int cmd_num = 0;
+    for (cmd_num = 0; cmd_num< background_count; cmd_num++){
+        free_command(background_cmds[cmd_num]);
+    }
+    free(background_cmds);
     return 0;
 }
 
@@ -295,8 +303,8 @@ int cmd_is_builtin(Command* cmd){
 
 void setup_stdin(Command* cmd){
     if (cmd->stdin_is_from_file){
-        int fd = open(cmd->stdin_file_name , O_RDONLY);
-        if (dup2(STDIN_FILENO, fd)){
+        int fd = open(cmd->stdin_file_name , O_RDONLY, 0666);
+        if (dup2(fd, STDIN_FILENO) <1){
             fprintf(stderr, "Error on file redirecting");
         };
     }
@@ -304,12 +312,13 @@ void setup_stdin(Command* cmd){
 
 void setup_stdout(Command* cmd){
     if (cmd->stdout_is_from_file){
-        int fd = open(cmd->stdout_file_name, O_WRONLY | O_CREAT | O_TRUNC);
-        if (dup2(STDOUT_FILENO, fd)){
+        int fd = open(cmd->stdout_file_name, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        if (dup2(fd, STDOUT_FILENO)<1){
             fprintf(stderr, "Error on file redirecting");
         };
     }
 }
+
 int perform_builtin_function(Command* cmd){
     char cwd[256];
     switch (cmd->built_cmd_type){
@@ -371,7 +380,9 @@ void fork_for_regular_process(Command* cmd){
         if (execvp(cmd->cmd, cmd->argv) < 0);
             printf(stderr, "exec failed\n");
     } else{
-        while (wait(&status) != pid);
+        while (wait(&status) != pid){
+
+        }
     }
 }
 
@@ -384,17 +395,16 @@ int fork_for_background_process(Command* cmd){
     }  else if (pid == 0){
         setup_stdin(cmd);
         setup_stdout(cmd);
-        cmd->pid = pid;
-        cmd->is_running_background = 1;
 
         if (execvp(cmd->cmd, cmd->argv) < 0) {
             printf(stderr, "exec failed\n");
             cmd->is_running_background = 0;
             // TODO: Add file close for file descriptor.
-            return -1;
         }
 
     } else{
+        cmd->pid = pid;
+        cmd->is_running_background = 1;
         if (waitpid(-1, &status, WNOHANG) == pid){
             fprintf(stderr, "[%s (%d) completed with status %d]\n", cmd->cmd, pid, status);
         }
@@ -402,6 +412,26 @@ int fork_for_background_process(Command* cmd){
     return pid;
 }
 
+void check_child_exits(Command** background_cmds, int bg_cmds_count){
+    int pid;
+    int status;
+
+    if (bg_cmds_count == 0){
+        return;
+    }
+
+    if ((pid = waitpid(-1, &status, WNOHANG)) > 0){
+        for (int i=0; i<bg_cmds_count; i++){
+            Command* cmd = background_cmds[i];
+            if (cmd->pid == pid && cmd->is_running_background){
+                fprintf(stderr, "[%s (%d) completed with status %d]\n",
+                        cmd->cmd, pid, status);
+                cmd->is_running_background = 0;
+                return;
+            }
+        }
+    }
+}
 // built in cd, pwd, exit
 // cd with chdir(). Needs the argument from getenv("HOME")
 
