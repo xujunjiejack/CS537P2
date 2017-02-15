@@ -55,11 +55,12 @@ int fork_for_background_process(Command* cmd);
 void fork_for_regular_process(Command* cmd);
 int cmd_is_builtin(Command* cmd);
 int perform_builtin_function(Command* cmd);
-void setup_stdin(Command* cmd);
-void setup_stdout(Command* cmd);
+int setup_stdin(Command* cmd);
+int setup_stdout(Command* cmd);
 void check_child_exits(Command** cmds, int count);
-int test_number = 1;
+void prepare_input_environment(int argc);
 
+int test_number = 5;
 void print_cmd_status(Command* cmd){
     printf("The cmd name: %s\n", cmd->cmd);
 
@@ -90,100 +91,79 @@ Command* free_command(Command * cmd){
         free(cmd->argv[i]);
     }
     free(cmd->argv);
-
+    free(cmd);
     return cmd;
 }
 
+void clean_string(char* str){
+    int i = 0;
+    for (i = 0; i< strlen(str); i++){
+        if (str[i] == '\n'){
+            str[i] = '\0';
+        }
+    }
+}
 
-int main() {
+int get_cmd_from_stdinput(int argc, char* command_str){
+    prepare_input_environment(argc);
 
-    // printf("Hello, World!\n");
+    if (fgets(command_str, 1024, stdin) == NULL){
+        return -2;
+    };
+
+    if (command_str[0] == '\n'){
+        return -1;
+    }
+
+    clean_string(command_str);
+}
+
+int main(int argc, char ** argv) {
+
     Command** background_cmds = calloc(1, sizeof(Command));
     int background_count = 0;
-    // How to write a shell
-    // Before input, try to determine whether the shell should enter
-    // interactive mode
-    // If yes, print out the string
-    // Use isatty() to check. Man isatty()
 
-
-    // If not, not print out the string. That's the only difference
-
-    // Read in input
-
-    // read in cmd
-
-    // parse cmd (built-in or user program, whether has file descriptor)
-    // How can I parse. In documentation, it says parsing by whitespace
-    // Then use the first string as the command
-    //char str[] = "1 2 3 < test.txt > hello ";
-    int count = 0;
     while(1) {
-
-        check_child_exits(background_cmds, background_count);
         char command_str[1024];
-        fgets(command_str, 1024, stdin);
+
+        // process before data entrance
+        check_child_exits(background_cmds, background_count);
+        int read_in_status = get_cmd_from_stdinput(argc, command_str);
+        if (read_in_status == -1){
+            continue;
+        }else if (read_in_status == -2){
+            break;
+        };
         check_child_exits(background_cmds, background_count);
 
-        printf("---------\nrunning time: %d\n for command %s\n", count, command_str);
-        count++;
-        char str[] = "hello > hello.txt &";
         Command *cmd = parse_command(command_str);
-
         print_cmd_status(cmd);
-        // if built-in, no fork. search in the built in list to make sure the cmd in built-ins
-        // support
+        // run builtin program
         if (cmd_is_builtin(cmd)) {
-
-            // This function returns 0 to indicate not success.
             // If this function returns -1, exit the program.
-
             if (perform_builtin_function(cmd) == -1) {
+                free_command(cmd);
                 break;
             }
+            free_command(cmd);
             continue;
         }
 
-
-        // check the file descriptor
-        // Given a specific file descriptor, such as "<" or ">", the corresponding
-        // stdin or stdout should be set to read the data from the file
-        // For stdout, the open() with the flags O-WRONLY, O_CREATE, and
-        // O_TRUNC can be useful
-        // For stdin, the open() should be executed with the O_RDONLY flag.\
-    // Do I need to close the file before leaving?
-        // if user program, fork process
-        // fork
-
+        // run other process
         if (cmd->is_back_ground_process) {
             fork_for_background_process(cmd);
-                // dynamically add cmd to cmd list
+
+            // dynamically add cmd to cmd list
+            // background process will be freed when shell exits
             background_count++;
             background_cmds = realloc(background_cmds,
                                           background_count * sizeof(Command *));
             background_cmds[background_count - 1] = cmd;
-            // background process will be freed when shell ends
         } else {
             fork_for_regular_process(cmd);
             free_command(cmd);
         }
-
-        // check &. If a command is issued with this character, this command is seen as
-        // a background process. The background process doesn't require the shell
-        // to wait for it to proceed. Just leave the background process running itself
-        // However, it's necessary to constant check whether this background process
-        // has been dead. If yes, then reap it.
-
-        // then for child, run
-        // (with execvp)
-
-        // for parent (shell), wait until the child exits.
     }
-
-    printf("Shell exits");
-    // TODO: free cmd and cmd lists;
-    // on_exiting(cmd);
-    // Loop back
 
     int cmd_num = 0;
     for (cmd_num = 0; cmd_num< background_count; cmd_num++){
@@ -194,7 +174,12 @@ int main() {
 }
 
 
-void prepare_input_environment(){
+
+void prepare_input_environment(int argc){
+
+    if (argc == 1 && isatty(fileno(stdin))){
+        printf("sqysh$ ");
+    }
     // check whether it's in environment mode or not
     // print out the sqysh$
 }
@@ -275,6 +260,9 @@ Command* parse_command(char* cmd){
         strcpy(command->argv[(command->argc) -1], arg);
         arg = strtok(NULL, " ");
     }
+    // add null to the end of the args
+    command->argv = realloc(command->argv, (command->argc+1) * sizeof(char*));
+    command->argv[command->argc] = NULL;
 
     // don't forget to free the Command at last
 
@@ -301,22 +289,34 @@ int cmd_is_builtin(Command* cmd){
     return 0;
 }
 
-void setup_stdin(Command* cmd){
+int setup_stdin(Command* cmd){
     if (cmd->stdin_is_from_file){
-        int fd = open(cmd->stdin_file_name , O_RDONLY, 0666);
+
+        int fd = 0;
+        if ((fd = open(cmd->stdin_file_name, O_RDONLY)) == -1){
+            fprintf(stdout,"file open crash");
+            exit(1);
+        };
+
         if (dup2(fd, STDIN_FILENO) <1){
             fprintf(stderr, "Error on file redirecting");
+            return -1;
         };
+        return fd;
     }
+    return -1;
 }
 
-void setup_stdout(Command* cmd){
+int setup_stdout(Command* cmd){
     if (cmd->stdout_is_from_file){
         int fd = open(cmd->stdout_file_name, O_WRONLY | O_CREAT | O_TRUNC, 0666);
         if (dup2(fd, STDOUT_FILENO)<1){
             fprintf(stderr, "Error on file redirecting");
+            return -1;
         };
+        return fd;
     }
+    return -1;
 }
 
 int perform_builtin_function(Command* cmd){
@@ -334,10 +334,15 @@ int perform_builtin_function(Command* cmd){
                 }
             }
 
+            if (cmd->argc > 2){
+                fprintf(stderr, "cd: too many arguments\n");
+                return 1;
+            }
+
             //Upon successful completion, 0 shall be returned.
             // This is not success case
             if (chdir(cmd->argv[1])){
-                fprintf(stderr, "%s: %s\n", cmd->cmd, strerror(errno));
+                fprintf(stderr, "cd: %s: %s\n", cmd->argv[1], strerror(errno));
                 return 0;
             }
             return 1;
@@ -353,7 +358,7 @@ int perform_builtin_function(Command* cmd){
             break;
 
         case _exits:
-            exit(0);
+            return -1;
             break;
 
         default:
@@ -367,18 +372,29 @@ void on_exiting(Command* cmd){
     free(cmd);
 }
 
+void close_file(int fd){
+    if (fd == -1){
+        return;
+    }else{
+        close(fd);
+    }
+}
+
 // run different process for regular process and background process
 void fork_for_regular_process(Command* cmd){
     pid_t pid;
     int status;
     if ((pid = fork()) < 0){
-        printf(stderr, "Forking child process failed \n");
-        exit(1);
+        fprintf(stderr, "Forking child process failed \n");
+        return;
     } else if (pid == 0){
-        setup_stdin(cmd);
-        setup_stdout(cmd);
-        if (execvp(cmd->cmd, cmd->argv) < 0);
-            printf(stderr, "exec failed\n");
+        int fd_in = setup_stdin(cmd);
+        int fd_out = setup_stdout(cmd);
+        if (execvp(cmd->cmd, cmd->argv) < 0) {
+            fprintf(stderr, "%s: %s\n", cmd->cmd, strerror(errno));
+            close_file(fd_in);
+            close_file(fd_out);
+        }
     } else{
         while (wait(&status) != pid){
 
@@ -393,14 +409,16 @@ int fork_for_background_process(Command* cmd){
     if ((pid=fork()) < 0){
 
     }  else if (pid == 0){
-        setup_stdin(cmd);
-        setup_stdout(cmd);
+        int fd_in = setup_stdin(cmd);puts(*next);
+        int fd_out = setup_stdout(cmd);
 
         if (execvp(cmd->cmd, cmd->argv) < 0) {
-            printf(stderr, "exec failed\n");
+            fprintf(stderr, "%s: %s\n", cmd->cmd, strerror(errno));
             cmd->is_running_background = 0;
-            // TODO: Add file close for file descriptor.
         }
+
+        close_file(fd_in);
+        close_file(fd_out);
 
     } else{
         cmd->pid = pid;
