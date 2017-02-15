@@ -137,7 +137,7 @@ int main(int argc, char ** argv) {
         check_child_exits(background_cmds, background_count);
 
         Command *cmd = parse_command(command_str);
-        print_cmd_status(cmd);
+        //print_cmd_status(cmd);
         // run builtin program
         if (cmd_is_builtin(cmd)) {
             // If this function returns -1, exit the program.
@@ -293,15 +293,16 @@ int setup_stdin(Command* cmd){
     if (cmd->stdin_is_from_file){
 
         int fd = 0;
-        if ((fd = open(cmd->stdin_file_name, O_RDONLY)) == -1){
-            fprintf(stdout,"file open crash");
-            exit(1);
-        };
-
-        if (dup2(fd, STDIN_FILENO) <1){
+        if ((fd = open(cmd->stdin_file_name, O_RDONLY, 0666)) == -1){
             fprintf(stderr, "Error on file redirecting");
             return -1;
         };
+
+        if (dup2(fd, STDIN_FILENO) == -1){
+            fprintf(stderr, "Error on file redirecting\n");
+            return -1;
+        };
+        close(fd);
         return fd;
     }
     return -1;
@@ -309,11 +310,16 @@ int setup_stdin(Command* cmd){
 
 int setup_stdout(Command* cmd){
     if (cmd->stdout_is_from_file){
-        int fd = open(cmd->stdout_file_name, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-        if (dup2(fd, STDOUT_FILENO)<1){
+        int fd = 0;
+        if ((fd = open(cmd->stdout_file_name, O_WRONLY | O_CREAT | O_TRUNC, 0666)) == -1 ){
             fprintf(stderr, "Error on file redirecting");
             return -1;
         };
+        if (dup2(fd, STDOUT_FILENO) == -1){
+            fprintf(stderr, "Error on file redirecting");
+            return -1;
+        };
+        close(fd);
         return fd;
     }
     return -1;
@@ -409,7 +415,7 @@ int fork_for_background_process(Command* cmd){
     if ((pid=fork()) < 0){
 
     }  else if (pid == 0){
-        int fd_in = setup_stdin(cmd);puts(*next);
+        int fd_in = setup_stdin(cmd);
         int fd_out = setup_stdout(cmd);
 
         if (execvp(cmd->cmd, cmd->argv) < 0) {
@@ -431,6 +437,7 @@ int fork_for_background_process(Command* cmd){
 }
 
 void check_child_exits(Command** background_cmds, int bg_cmds_count){
+    //
     int pid;
     int status;
 
@@ -443,7 +450,7 @@ void check_child_exits(Command** background_cmds, int bg_cmds_count){
             Command* cmd = background_cmds[i];
             if (cmd->pid == pid && cmd->is_running_background){
                 fprintf(stderr, "[%s (%d) completed with status %d]\n",
-                        cmd->cmd, pid, status);
+                        cmd->cmd, pid, WEXITSTATUS(status));
                 cmd->is_running_background = 0;
                 return;
             }
