@@ -50,7 +50,6 @@ typedef struct {
 } Command;
 
 Command* parse_command(char* cmd);
-void on_exiting(Command* cmd);
 int fork_for_background_process(Command* cmd);
 void fork_for_regular_process(Command* cmd);
 int cmd_is_builtin(Command* cmd);
@@ -58,9 +57,8 @@ int perform_builtin_function(Command* cmd);
 int setup_stdin(Command* cmd);
 int setup_stdout(Command* cmd);
 void check_child_exits(Command** cmds, int count);
-void prepare_input_environment(int argc);
+FILE* prepare_input_environment(int argc, char** argv, int* is_from_file);
 
-int test_number = 5;
 void print_cmd_status(Command* cmd){
     printf("The cmd name: %s\n", cmd->cmd);
 
@@ -104,10 +102,14 @@ void clean_string(char* str){
     }
 }
 
-int get_cmd_from_stdinput(int argc, char* command_str){
-    prepare_input_environment(argc);
+int get_cmd_from_file(int argc, char* command_str, FILE *stream){
 
-    if (fgets(command_str, 1024, stdin) == NULL){
+    if (argc == 1 && isatty(fileno(stdin))){
+        printf("sqysh$ ");
+    }
+
+
+    if (fgets(command_str, 1024, stream) == NULL){
         return -2;
     };
 
@@ -116,28 +118,36 @@ int get_cmd_from_stdinput(int argc, char* command_str){
     }
 
     clean_string(command_str);
+    return 1;
 }
 
 int main(int argc, char ** argv) {
 
     Command** background_cmds = calloc(1, sizeof(Command));
     int background_count = 0;
+    int is_from_file = 0;
+    FILE* input_stream = prepare_input_environment(argc, argv, &is_from_file);
 
     while(1) {
         char command_str[1024];
 
         // process before data entrance
         check_child_exits(background_cmds, background_count);
-        int read_in_status = get_cmd_from_stdinput(argc, command_str);
+
+        int read_in_status = get_cmd_from_file(argc, command_str, input_stream);
+
         if (read_in_status == -1){
             continue;
         }else if (read_in_status == -2){
             break;
         };
+
         check_child_exits(background_cmds, background_count);
 
         Command *cmd = parse_command(command_str);
-        //print_cmd_status(cmd);
+
+       // print_cmd_status(cmd);
+
         // run builtin program
         if (cmd_is_builtin(cmd)) {
             // If this function returns -1, exit the program.
@@ -165,21 +175,41 @@ int main(int argc, char ** argv) {
         }
     }
 
+    // Free the background lists
     int cmd_num = 0;
     for (cmd_num = 0; cmd_num< background_count; cmd_num++){
         free_command(background_cmds[cmd_num]);
     }
     free(background_cmds);
+
+    if (is_from_file == 1){
+        fclose(input_stream);
+    }
     return 0;
 }
 
+FILE* prepare_input_environment(int argc, char** argv, int* is_from_file){
 
-
-void prepare_input_environment(int argc){
-
-    if (argc == 1 && isatty(fileno(stdin))){
-        printf("sqysh$ ");
+    if (argc == 1){
+        return stdin;
     }
+
+    FILE* f;
+    if (argc == 2){
+
+        f = fopen(argv[1],"r");
+        if (f == NULL){
+            fprintf(stderr, "File not found");
+            exit(1);
+        }
+        *is_from_file = 1;
+        return f;
+    }
+
+    fprintf(stderr, "Shell crush");
+    exit(1);
+    return NULL;
+
     // check whether it's in environment mode or not
     // print out the sqysh$
 }
@@ -327,6 +357,7 @@ int setup_stdout(Command* cmd){
 
 int perform_builtin_function(Command* cmd){
     char cwd[256];
+
     switch (cmd->built_cmd_type){
         case _cd :
 
@@ -373,11 +404,6 @@ int perform_builtin_function(Command* cmd){
     }
 }
 
-void on_exiting(Command* cmd){
-    free_command(cmd);
-    free(cmd);
-}
-
 void close_file(int fd){
     if (fd == -1){
         return;
@@ -400,6 +426,7 @@ void fork_for_regular_process(Command* cmd){
             fprintf(stderr, "%s: %s\n", cmd->cmd, strerror(errno));
             close_file(fd_in);
             close_file(fd_out);
+            exit(1);
         }
     } else{
         while (wait(&status) != pid){
@@ -425,6 +452,7 @@ int fork_for_background_process(Command* cmd){
 
         close_file(fd_in);
         close_file(fd_out);
+        exit(1);
 
     } else{
         cmd->pid = pid;
@@ -445,17 +473,17 @@ void check_child_exits(Command** background_cmds, int bg_cmds_count){
         return;
     }
 
-    if ((pid = waitpid(-1, &status, WNOHANG)) > 0){
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0){
         for (int i=0; i<bg_cmds_count; i++){
             Command* cmd = background_cmds[i];
             if (cmd->pid == pid && cmd->is_running_background){
                 fprintf(stderr, "[%s (%d) completed with status %d]\n",
                         cmd->cmd, pid, WEXITSTATUS(status));
                 cmd->is_running_background = 0;
-                return;
             }
         }
     }
+    return;
 }
 // built in cd, pwd, exit
 // cd with chdir(). Needs the argument from getenv("HOME")
