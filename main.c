@@ -1,14 +1,22 @@
+///////////////////////////////////////////////////////////////////////////////
+//                   ALL STUDENTS COMPLETE THESE SECTIONS
+// Title:            sqysh
+// Files:            sqysh.c
+// Semester:         CS 537 Spring 537
+//
+// Author:           Junjie Xu
+// Email:            jxu259@wisc.edu
+// CS Login:         junjie
+// Lecturer's Name:  Zev Weiss
+//
+//////////////////// PAIR PROGRAMMERS COMPLETE THIS SECTION ////////////////////
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <sys/wait.h>
-
-// No mechanism for escaping or quoting whitespace (or anything else) is needed
-
-//Input lines will be at most 256 characters (including the trailing '\n')
 
 typedef enum{
     none = -1,
@@ -18,34 +26,20 @@ typedef enum{
 
 }builtin_cmd;
 
+
 typedef struct {
 
-    char* cmd;
-
-    char** argv;
-
-    int argc;
-
-    int stdin_is_from_file;
-
-    char* stdin_file_name;
-
-    int stdout_is_from_file;
-
-    char* stdout_file_name;
-
-    int is_back_ground_process;
-
-    int pid;
-
-    int is_running_background;
-
-    builtin_cmd built_cmd_type;
-    // cmd
-    // file descriptor with its name
-    // background
-    // argument
-    // builtin_cmd
+    char* cmd;                      // Command name
+    char** argv;                    // Argument for that command, excluding file descriptor
+    int argc;                       // Number of the argument
+    int stdin_is_from_file;         // Decide whether we need to redirect the stdin from a file
+    char* stdin_file_name;          // The source file name for stdin
+    int stdout_is_from_file;        // Decide whether we need to redirect the stdoun to a file
+    char* stdout_file_name;         // The output file for stdout
+    int is_back_ground_process;     // Indicating whether is command is background process
+    int pid;                        // Pid for this Command
+    int is_running_background;      // Whether this command is currently running in background
+    builtin_cmd built_cmd_type;     // the command type
 
 } Command;
 
@@ -79,6 +73,12 @@ void print_cmd_status(Command* cmd){
     printf("Is background: %d \n", cmd->is_back_ground_process);
 }
 
+/**
+ * Given a command, this function will free the data inside,
+ * and also this pointer
+ * @param cmd
+ * @return
+ */
 Command* free_command(Command * cmd){
     free(cmd->cmd);
     free(cmd->stdin_file_name);
@@ -93,6 +93,11 @@ Command* free_command(Command * cmd){
     return cmd;
 }
 
+/**
+ * Given a read-in string. Get rid of "\n" at the end of the string
+ *
+ * @param str
+ */
 void clean_string(char* str){
     int i = 0;
     for (i = 0; i< strlen(str); i++){
@@ -102,6 +107,15 @@ void clean_string(char* str){
     }
 }
 
+/**
+ * Read in the data from the given stream. If the input source is stdin with the terminal,
+ * I regard it as interactive mode
+ *
+ * @param argc number of the argument
+ * @param command_str pass the command string out
+ * @param stream stdin or file
+ * @return
+ */
 int get_cmd_from_file(int argc, char* command_str, FILE *stream){
 
     if (argc == 1 && isatty(fileno(stdin))){
@@ -120,6 +134,7 @@ int get_cmd_from_file(int argc, char* command_str, FILE *stream){
     clean_string(command_str);
     return 1;
 }
+
 
 int main(int argc, char ** argv) {
 
@@ -188,6 +203,14 @@ int main(int argc, char ** argv) {
     return 0;
 }
 
+/**
+ * Given the argument, decide which stdin to use
+ *
+ * @param argc
+ * @param argv
+ * @param is_from_file, a pointer that passes whether the stdin is from a file
+ * @return
+ */
 FILE* prepare_input_environment(int argc, char** argv, int* is_from_file){
 
     if (argc == 1){
@@ -206,7 +229,7 @@ FILE* prepare_input_environment(int argc, char** argv, int* is_from_file){
         return f;
     }
 
-    fprintf(stderr, "Shell crush");
+    fprintf(stderr, "Sqysh currently doesn't support arguments more than 2");
     exit(1);
     return NULL;
 
@@ -214,6 +237,13 @@ FILE* prepare_input_environment(int argc, char** argv, int* is_from_file){
     // print out the sqysh$
 }
 
+/**
+ * Wrapper for comparing whether the string is the same
+ *
+ * @param str
+ * @param character
+ * @return
+ */
 int string_equal(char *str, char *character){
     if (!strcmp(str, character)){
         return 1;
@@ -221,7 +251,11 @@ int string_equal(char *str, char *character){
     return 0;
 }
 
-// I'm thinking of providing a data structure to save the command issue
+/**
+ * Given a string of command. Parse it to the data structure of Command
+ * @param cmd
+ * @return
+ */
 Command* parse_command(char* cmd){
 
     // the parser actually is a iterator
@@ -299,6 +333,12 @@ Command* parse_command(char* cmd){
     return command;
 }
 
+/**
+ * Check whether a command is a builtin function
+ * @param cmd Command
+ * @return 1 if this command is a builtin function
+ *         0 if this command is not
+ */
 int cmd_is_builtin(Command* cmd){
     if (string_equal(cmd->cmd,"cd")){
         cmd->built_cmd_type = _cd;
@@ -319,6 +359,11 @@ int cmd_is_builtin(Command* cmd){
     return 0;
 }
 
+/**
+ * Redirect the stdin from the command
+ * @param cmd
+ * @return -1 for failure
+ */
 int setup_stdin(Command* cmd){
     if (cmd->stdin_is_from_file){
 
@@ -338,10 +383,16 @@ int setup_stdin(Command* cmd){
     return -1;
 }
 
+/**
+ * Redirect the stdout from the command
+ * @param cmd
+ * @return -1 if failure
+ */
 int setup_stdout(Command* cmd){
     if (cmd->stdout_is_from_file){
         int fd = 0;
-        if ((fd = open(cmd->stdout_file_name, O_WRONLY | O_CREAT | O_TRUNC, 0666)) == -1 ){
+        if ((fd = open(cmd->stdout_file_name, O_WRONLY | O_CREAT | O_TRUNC,
+                       0666)) == -1 ){
             fprintf(stderr, "Error on file redirecting");
             return -1;
         };
@@ -355,13 +406,18 @@ int setup_stdout(Command* cmd){
     return -1;
 }
 
+/**
+ * Execute a builtin command,
+ * @param cmd user command
+ * @return -1 if the shell needs to exit
+ */
 int perform_builtin_function(Command* cmd){
-    char cwd[256];
+    char cwd[257];
 
     switch (cmd->built_cmd_type){
         case _cd :
 
-            // if no argument gets
+            // if no argument
             if (cmd->argc == 1){
                 if (chdir(getenv("HOME"))){
                     fprintf(stderr, "%s: %s\n", cmd->cmd, strerror(errno));
@@ -404,6 +460,10 @@ int perform_builtin_function(Command* cmd){
     }
 }
 
+/**
+ * close a file descriptor if the file descriptor is not 1
+ * @param fd
+ */
 void close_file(int fd){
     if (fd == -1){
         return;
@@ -412,7 +472,10 @@ void close_file(int fd){
     }
 }
 
-// run different process for regular process and background process
+/**
+ * fork for regular process and background process
+ * @param cmd
+ */
 void fork_for_regular_process(Command* cmd){
     pid_t pid;
     int status;
@@ -428,14 +491,18 @@ void fork_for_regular_process(Command* cmd){
             close_file(fd_out);
             exit(1);
         }
-    } else{
-        while (wait(&status) != pid){
 
-        }
+    } else{
+        while (wait(&status) != pid){}
     }
 }
 
 // Return pid for this background process
+/**
+ * fork a backgound proces with redirecting
+ * @param cmd the command
+ * @return pid for the new child process
+ */
 int fork_for_background_process(Command* cmd){
     pid_t  pid;
     int status;
@@ -458,12 +525,20 @@ int fork_for_background_process(Command* cmd){
         cmd->pid = pid;
         cmd->is_running_background = 1;
         if (waitpid(-1, &status, WNOHANG) == pid){
-            fprintf(stderr, "[%s (%d) completed with status %d]\n", cmd->cmd, pid, status);
+            fprintf(stderr, "[%s (%d) completed with status %d]\n", cmd->cmd,
+                    pid, status);
         }
     }
     return pid;
 }
 
+/**
+ * Use waitpid to check whether there exists a child process exits, and print
+ * out the information
+ * given the background commands lists
+ * @param background_cmds background lists
+ * @param bg_cmds_count the count of the background
+ */
 void check_child_exits(Command** background_cmds, int bg_cmds_count){
     //
     int pid;
@@ -485,9 +560,3 @@ void check_child_exits(Command** background_cmds, int bg_cmds_count){
     }
     return;
 }
-// built in cd, pwd, exit
-// cd with chdir(). Needs the argument from getenv("HOME")
-
-// pwd. Use getcwd()
-
-// exit (call exist);
